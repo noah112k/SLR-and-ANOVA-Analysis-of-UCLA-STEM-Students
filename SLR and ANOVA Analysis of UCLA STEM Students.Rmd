@@ -1,0 +1,135 @@
+---
+title: "SLR and ANOVA Analysis of UCLA STEM Students"
+author: "Noah Jones"
+date: "10/13/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# An exploratory data analysis of UCLA STEM student data. Of the 55 variables collected, we focus on students' Socio-Economic Struggle (SES), Mother and Father's Education, 
+
+```{r}
+library(car)
+library(effects)
+library(lsmeans)
+library(mvtnorm)
+library(survival)
+library(MASS)
+library(multcomp)
+```
+
+```{r}
+stem <- read.csv("stemjune20.csv")
+hist(stem$SES, xlab = "Students' Socio-Economic Struggle", 
+     main = "Histogram of Students' Socio-Economic Struggle")
+```
+The Socio-Economic Struggle data appears to be approximately normal, and slightly right skewed.
+
+### Computing summary statistics for SES by Father's Education
+```{r}
+tapply(stem$SES, stem$FatherEdu, summary)
+```
+
+### Computing boxplot of SES by Mother's Education
+```{r}
+boxplot(SES~factor(MotherEdu, levels = levels(stem$MotherEdu)[c(4,5,2,3)]),
+        data = stem, axes = FALSE,xlab = "Mother's Education", ylab = "Socio-Economic Struggle")
+axis(side = 2)
+axis(side = 1, at = c(1,2,3,4),
+     labels = c("HS or less", "2-Year", "4-Year", "Graduate School"))
+```
+
+Based on this side by side boxplot, it would appear that the higher a student's mother's education is, the lower their socio-economic struggle tends to be.
+
+Since MotherEdu is a categorical variable with 4 levels, we could run an F test with ANOVA, which would test whether any of the 4 means are significantly different from the total mean. See below code for this analysis.
+
+```{r}
+m1 <- aov(stem$SES~stem$MotherEdu)
+summary(m1)
+TukeyHSD(m1)
+```
+
+Our F test in the ANOVA table has a very low p value <2e-16, so we reject the null hypothesis that the 4 population means are equal, concluding that at least one of the pairs is statistically different. In our Post-Hocs, which test significance of each pair, We see that the differences in Mother's Education between Graduate and 4 year college, Graduate and 2 year college, Graduate and High school,  4 year college and high school, and 2 year college and high school are all significant in predicting a student's Socio-Economic Struggle.
+
+
+### Below we compute the 95% confidence interval for the population mean of SES using SLR.
+```{r}
+m1 <- lm(stem$SES~1)
+confint(m1)
+```
+
+We are 95% confident that the population mean for students' socio-economic struggle lies between 45.92996 and 49.41826
+
+### Computing the 95% confidence interval by hand.
+
+Since we have a large sample size, we can approximate using the 95% Z score, 1.96, for our confidence interval calculation: $\bar{X} \pm 1.96 \cdot S_{\bar{X}}$
+```{r}
+S_xbar <- sqrt(var(stem$SES, na.rm = TRUE))/sqrt(length(stem$SES))
+upper <- mean(stem$SES, na.rm = TRUE) + S_xbar*1.96
+lower <- mean(stem$SES, na.rm = TRUE) - S_xbar*1.96
+c(lower, upper)
+```
+
+### Here, we are dealing with students' ability to cope with academic stress as a predictor for students' perception on the quality of UCLA academics.
+
+We first check that all assumptions of ANOVA are met, namely Normality, Independence, and Homogeneity of Residuals. We follow that by running an ANOVA, with the above listed predictor and outcome variable.
+
+```{r}
+attach(stem)
+copeacadstress<-recode(Q3.13,"'Agree'='always';'Disagree'='rarely';'Not Sure'='sometimes';'Strongly Agree'='always';'Strongly Disagree'='rarely'", levels = c("rarely","sometimes","always"))
+table(copeacadstress)
+tapply(Academic,copeacadstress,var,na.rm=1)
+
+F_max <- 175.33402/96.51183
+F_crit <- 1.85
+F_max < F_crit # So we fail to reject H0
+m2 <- aov(Academic~copeacadstress)
+shapiro.test(resid(m2))
+qqnorm(resid(m2))
+summary(m2)
+tapply(Academic,copeacadstress,mean,na.rm=1)
+TukeyHSD(m2)
+```
+
+### Here, we run a very similar analysis but under an ANCOVA model. The ANCOVA, or Analysis of Covariance, model includes the effect of a potential covariate on our outcome variable, UCLA students' Sense of Belonging. We check our ANCOVA assumptions, calculate means after adjusted for the covariate, calculate Regression beta estimates for beta 1, 2, and 3, run necessary Post-Hocs on our ANCOVA model, and lastly compute the achieved power, or practical significance, of our findings.
+
+```{r}
+m3 <- aov(Academic~copeacadstress*Belonging)
+summary(m3)
+shapiro.test(resid(m3))
+m4 <- aov(Academic~copeacadstress+Belonging)
+summary(m4)
+
+cor(Academic,Belonging,use="complete.obs")
+lsmeans(m4, "copeacadstress")
+
+tapply(Belonging,copeacadstress,var, na.rm=TRUE)
+cov(Academic[copeacadstress=="rarely"],Belonging[copeacadstress=="rarely"],use="complete.obs")
+cov(Academic[copeacadstress=="sometimes"],Belonging[copeacadstress=="sometimes"],use="complete.obs")
+cov(Academic[copeacadstress=="always"],Belonging[copeacadstress=="always"],use="complete.obs")
+beta_1 <- 64.49562/181.2108
+beta_2 <- 43.08701/164.9978
+beta_3 <- 81.09166/177.7214 
+c(beta_1,beta_2,beta_3)
+summary(lm(Academic~Belonging, data = stem[copeacadstress=="always",]))
+
+posthoc <- glht(m4, linfct = mcp(copeacadstress = "Tukey"))
+summary(posthoc)
+
+eta_group <- 65881/(65881+21170+86852)
+eta_covariate <- 21170/(65881+21170+86852)
+c(eta_group,eta_covariate)
+
+computed_power <- 1.0000000
+computed_sample_size <- 149
+```
+
+### Analysis of results, and comparison between ANOVA and ANCOVA models.
+
+In both the ANOVA and the ANCOVA, we see that our grouping variable, copeacadstress, is significant. The posthocs on the unadjusted means from the ANOVA show that all differences are significant. The posthocs on the means adjusted for Belonging in the ANCOVA also show that all differences in adjusted means are significant.
+
+Aside from the differences in theoretical underpinnings of ANOVA and ANCOVA, we can see that the ANCOVA result not only provides a SS and F test for the grouping variable, copeacadstress, but also for the covariate, Belonging, which is found to be significant. We notice that our ANCOVA result has a lower SSresidual than the ANOVA result, 86852 vs. 108612, implying that this model has less error. Finally, as mentioned in earlier parts, we notice differences in the calculations of the means. The means for the rarely and sometimes groups in the ANOVA model are lower than their ANCOVA counterparts, and the always group has a higher mean in the ANOVA model than in the ANCOVA model.
+
+The ANCOVA model has less error because we are accounting for the covariate, Belonging, in the model. Since Belonging is correlated with our outcome variable, Academic, with a correlation value of 0.53, it is beneficial to use ANCOVA, which will account for the linear relationship between Belonging and Academic when creating the ANOVA based on our grouping variable, copeacadstress. The reason for the differences in the means between the ANOVA and the ANCOVA models is due to the fact that the ANCOVA means are adjusted with respect to Belonging.
+
